@@ -2040,7 +2040,6 @@ namespace DshLauncher
         private readonly int _borderThin;
         private int _border;
         private bool _maxed;
-        private bool _converting;
         private Rectangle _preMaxBounds;
         private readonly int _titleH;
         private readonly Font _titleFont;
@@ -2086,10 +2085,13 @@ namespace DshLauncher
             float sc = 1f;
             try { using (Graphics gg = Graphics.FromHwnd(IntPtr.Zero)) sc = gg.DpiX / 96f; } catch { }
             _scale = Math.Max(1, (int)Math.Round(sc));
-            _borderWide = 8 * _scale;
-            _borderThin = 3 * _scale;
-            _border = _borderWide;
-            _titleH = 32 * _scale;
+            // 改用系统标题栏后，自绘标题栏和边框全部退场：
+            //   _border 与 _titleH 都为 0，WebView2 直接铺满整个客户区。
+            // 之前是 8/3/32，配合 WM_NCCALCSIZE 伪装无边框用的。
+            _borderWide = 0;
+            _borderThin = 0;
+            _border = 0;
+            _titleH = 0;
             _titleFont = MakeTitleFont(8.5f * sc);
             try { _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath).ToBitmap(); } catch { }
 
@@ -2141,23 +2143,8 @@ namespace DshLauncher
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            // 系统最大化（拖到屏幕顶部 / Win+Up）：转成精确贴合的自定义最大化，
-            // 否则带边框的窗口会比工作区大一圈，底部压住任务栏
-            if (!_converting && !_maxed && WindowState == FormWindowState.Maximized)
-            {
-                _converting = true;
-                WindowState = FormWindowState.Normal;
-                BeginInvoke(new Action(delegate
-                {
-                    _maxed = true;
-                    Bounds = Screen.FromControl(this).WorkingArea;
-                    UpdateBorderForState();
-                    LayoutWeb();
-                    Invalidate();
-                    _converting = false;
-                }));
-            }
-            UpdateBorderForState();
+            // 最大化交给系统管（不再做"系统最大化→自定义最大化"的转换），
+            // 这里只同步自绘层和 DWM 圆角。
             LayoutWeb();
             ApplyCornerPreference();
             Invalidate();
@@ -2199,52 +2186,26 @@ namespace DshLauncher
         {
             try
             {
-                int pref = _maxed ? 1 : 2;  // 1=不做圆角 2=圆角
+                int pref = (WindowState == FormWindowState.Maximized || _maxed) ? 1 : 2;  // 1=不做圆角 2=圆角
                 DwmSetWindowAttribute(this.Handle, 33, ref pref, sizeof(int));
+            }
+            catch { }
+            try
+            {
+                // DWMWA_USE_IMMERSIVE_DARK_MODE(20)：让系统标题栏跟随深色主题，
+                // 不然白色标题栏配深色内容区会很割裂。
+                int dark = 1;
+                DwmSetWindowAttribute(this.Handle, 20, ref dark, sizeof(int));
             }
             catch { }
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            Graphics g = e.Graphics;
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            int W = ClientSize.Width, H = ClientSize.Height;
-
+            // 系统标题栏接管了标题文字和三个按钮，自绘的渐变标题栏、按钮、
+            // 双层描边全部退场，这里只负责把客户区刷成深色底。
             using (SolidBrush b = new SolidBrush(Color.FromArgb(9, 14, 26)))
-                g.FillRectangle(b, 0, 0, W, H);
-
-            Rectangle tr = new Rectangle(0, 0, W, _titleH);
-            if (tr.Height > 0 && tr.Width > 0)
-                using (System.Drawing.Drawing2D.LinearGradientBrush br =
-                    new System.Drawing.Drawing2D.LinearGradientBrush(tr,
-                        Color.FromArgb(19, 28, 47), Color.FromArgb(12, 19, 33), 90f))
-                    g.FillRectangle(br, tr);
-
-            int pad = 13 * _scale, iconSize = 19 * _scale;
-            if (_appIcon != null) g.DrawImage(_appIcon, pad, (_titleH - iconSize) / 2, iconSize, iconSize);
-            TextRenderer.DrawText(g, WindowCaption, _titleFont,
-                new Rectangle(pad + iconSize + 10 * _scale, 0, Math.Max(10, W - 300 * _scale), _titleH),
-                Color.FromArgb(222, 232, 246),
-                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.NoPadding);
-
-            for (int i = 0; i < 3; i++) DrawButton(g, i);
-
-            using (Pen pen = new Pen(Color.FromArgb(38, 52, 74)))
-                g.DrawLine(pen, _border, _titleH, W - _border, _titleH);
-
-            // 外圈：左上亮、右下暗的渐变描边，做出受光感
-            using (System.Drawing.Drawing2D.GraphicsPath p = RoundPath(new Rectangle(0, 0, W - 1, H - 1), 13 * _scale))
-            using (System.Drawing.Drawing2D.LinearGradientBrush lb = new System.Drawing.Drawing2D.LinearGradientBrush(
-                new Rectangle(0, 0, W, H), Color.FromArgb(138, 180, 236), Color.FromArgb(46, 66, 98), 42f))
-            using (Pen pen = new Pen(lb, Math.Max(1, _scale)))
-                g.DrawPath(pen, p);
-
-            // 内圈：一层暗描边，让边框有厚度
-            using (System.Drawing.Drawing2D.GraphicsPath p2 = RoundPath(
-                new Rectangle(_scale, _scale, W - 1 - 2 * _scale, H - 1 - 2 * _scale), 12 * _scale))
-            using (Pen pen2 = new Pen(Color.FromArgb(20, 28, 44), Math.Max(1, _scale)))
-                g.DrawPath(pen2, p2);
+                e.Graphics.FillRectangle(b, 0, 0, ClientSize.Width, ClientSize.Height);
         }
 
         private static System.Drawing.Drawing2D.GraphicsPath RoundPath(Rectangle r, int rad)
@@ -2347,53 +2308,11 @@ namespace DshLauncher
 
         protected override void WndProc(ref Message m)
         {
-            const int WM_NCHITTEST = 0x84;
-            const int WM_GETMINMAXINFO = 0x24;
-            const int WM_NCCALCSIZE = 0x83;
-            if (m.Msg == WM_NCCALCSIZE && m.WParam != IntPtr.Zero)
-            {
-                // 客户区 = 整个窗口矩形（边框全部由自绘）；自定义最大化下窗口矩形正好等于工作区
-                m.Result = IntPtr.Zero;
-                return;
-            }
-            if (m.Msg == WM_GETMINMAXINFO)
-            {
-                // 自己定最大化边界：精确贴合工作区，不留缝也不压任务栏
-                Rectangle wa = Screen.FromControl(this).WorkingArea;
-                MINMAXINFO mmi = (MINMAXINFO)Marshal.PtrToStructure(m.LParam, typeof(MINMAXINFO));
-                mmi.ptMaxPosition.X = wa.Left;
-                mmi.ptMaxPosition.Y = wa.Top;
-                mmi.ptMaxSize.X = wa.Width;
-                mmi.ptMaxSize.Y = wa.Height;
-                Marshal.StructureToPtr(mmi, m.LParam, false);
-                m.Result = IntPtr.Zero;
-                return;
-            }
-            if (m.Msg == WM_NCHITTEST)
-            {
-                base.WndProc(ref m);
-                if ((int)m.Result != 1) return;
-                int sx = unchecked((short)(long)m.LParam);
-                int sy = unchecked((short)(((long)m.LParam) >> 16));
-                Point p = PointToClient(new Point(sx, sy));
-                if (!_maxed)
-                {
-                    int grab = _border + 2 * _scale;
-                    bool left = p.X <= grab, right = p.X >= ClientSize.Width - grab;
-                    bool top = p.Y <= grab, bottom = p.Y >= ClientSize.Height - grab;
-                    if (top && left) { m.Result = (IntPtr)13; return; }
-                    if (top && right) { m.Result = (IntPtr)14; return; }
-                    if (bottom && left) { m.Result = (IntPtr)16; return; }
-                    if (bottom && right) { m.Result = (IntPtr)17; return; }
-                    if (left) { m.Result = (IntPtr)10; return; }
-                    if (right) { m.Result = (IntPtr)11; return; }
-                    if (top) { m.Result = (IntPtr)12; return; }
-                    if (bottom) { m.Result = (IntPtr)15; return; }
-                }
-                // 标题栏交给 WinForms 自己收事件：拖动走系统的 HTCAPTION（保留分屏），
-                // 双击则走自定义最大化（系统最大化会多出一圈边框压住任务栏）
-                return;
-            }
+            // 改用系统标题栏之后，原先那三个自绘窗口的特例处理全部撤掉：
+            //   WM_NCCALCSIZE   —— 抹掉非客户区伪装无边框（正是尺寸漂移的根源）
+            //   WM_GETMINMAXINFO —— 自定义最大化边界
+            //   WM_NCHITTEST    —— 自绘边框的八方向命中测试
+            // 非客户区、最大化边界、边缘拖拽、标题栏拖动全部交回系统。
             base.WndProc(ref m);
         }
 

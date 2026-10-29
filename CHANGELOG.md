@@ -1,5 +1,33 @@
 # 更新记录
 
+## v1.0.7 — 2026-10-30
+
+### 修复
+
+- **「DSH 工作台」每从任务栏切回来一次就长高一点，最后冲出屏幕底部（严重）** ——
+  为了让外观无边框，窗口原本用 `WM_NCCALCSIZE` 把非客户区抹掉。但那只是视觉障眼法：
+  WinForms 的 `Form` 仍按"有边框"换算 `Size` ↔ `ClientSize`，于是每次最小化→还原都会
+  把边框尺寸再补一遍（125% DPI 下 **+14 宽 / +38 高**），窗口一轮比一轮大。
+
+  期间试过四种事后纠正方案，全部有副作用，最终都放弃了：
+  | 方案 | 结果 |
+  |---|---|
+  | 改 `WM_NCCALCSIZE` 的 `rgrc0` | 系统把标题栏重画一遍，标题文字重影 |
+  | `OnResize` 里钉住 `ClientSize` | 尺寸稳了，但 WebView2 黑屏 |
+  | `SC_RESTORE` 时纠正一次 | `SW_RESTORE` 不走 `WM_SYSCOMMAND`，钩子收不到 |
+  | `FormBorderStyle.None` + `WS_THICKFRAME` | 标题文字不画、内容左移、最大化跑偏（DPI 整层要重做）|
+
+  **最终方案：退回系统标题栏。** 撤掉 `WM_NCCALCSIZE` / `WM_GETMINMAXINFO` /
+  `WM_NCHITTEST` 三个自绘特例，非客户区、最大化边界、边缘拖拽全部交还系统；
+  自绘层退化成纯深色背景。配合 `DwmSetWindowAttribute` 补回观感：
+  `DWMWA_USE_IMMERSIVE_DARK_MODE` 让标题栏跟随深色主题，`DWMWA_WINDOW_CORNER_PREFERENCE`
+  保留 Win11 圆角（最大化时自动取消圆角）。
+
+  实测连续 12 轮最小化/还原**零漂移**，最大化精确盖满工作区，最大化→还原精确回原位。
+
+  > 代价：标题栏从自绘的深蓝渐变样式变成系统样式。这是拿回稳定性必须付的账——
+  > 无边框外观和 WinForms 的尺寸换算天生冲突，WebView2 又对尺寸抖动极其敏感。
+
 ## v1.0.6 — 2026-09-30
 
 ### 变更

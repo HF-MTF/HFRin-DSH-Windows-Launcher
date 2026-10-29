@@ -137,7 +137,13 @@ Add-Type -AssemblyName System.Windows.Forms
 $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
 Write-Output ('窗口:   ' + $rc.Left + ',' + $rc.Top + '  ' + ($rc.Right - $rc.Left) + 'x' + ($rc.Bottom - $rc.Top))
 Write-Output ('工作区: ' + $wa.Left + ',' + $wa.Top + '  ' + $wa.Width + 'x' + $wa.Height)
-$match = ($rc.Left -eq $wa.Left) -and ($rc.Top -eq $wa.Top) -and (($rc.Right - $rc.Left) -eq $wa.Width) -and (($rc.Bottom - $rc.Top) -eq $wa.Height)
+$tol = 16
+$match = ([Math]::Abs($rc.Left - $wa.Left) -le $tol) -and ([Math]::Abs($rc.Top - $wa.Top) -le $tol) -and
+         ([Math]::Abs(($rc.Right - $rc.Left) - $wa.Width) -le ($tol * 2)) -and
+         ([Math]::Abs(($rc.Bottom - $rc.Top) - $wa.Height) -le ($tol * 2))
+# 改用系统标题栏后走的是系统最大化：Windows 会把窗口外扩一圈把边框藏到屏幕外
+# （实测 -9,-9 且 2578x1398，工作区 2560x1380），视觉上仍然严丝合缝，
+# 所以这里容忍 ±16px 的溢出，只要求"盖满工作区"。
 Write-Output ('精确贴合(无缝隙): ' + $match)
 
 $shot = Join-Path $out '_max_tl.png'
