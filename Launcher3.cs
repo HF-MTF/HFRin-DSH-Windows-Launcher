@@ -2094,6 +2094,8 @@ namespace DshLauncher
             _titleH = 0;
             _titleFont = MakeTitleFont(8.5f * sc);
             try { _appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath).ToBitmap(); } catch { }
+            // 系统标题栏和任务栏都读 Form.Icon；不设的话会显示系统默认的空白文档图标。
+            try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             Text = WindowCaption;
             // 保留系统边框样式（WS_CAPTION），Win11 才会给这个窗口播原生过渡动画；
